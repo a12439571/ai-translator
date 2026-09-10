@@ -413,7 +413,12 @@ function init() {
     loadGlossaryToTextareas();
     updateProvUI();
     updateCtxBadge();
-    if (!cfg.apiKey) toggleAc('settings');
+    if (!cfg.apiKey) {
+      toggleAc('settings');
+    } else if (cfg.model) {
+      // Auto-restore: silently load model list so saved selection is applied
+      checkModels(true);
+    }
   } catch(e) {
     console.error('Init error:', e);
     toast('Initialization error: ' + e.message, 'err');
@@ -468,24 +473,29 @@ function toggleAc(id) {
   if (arrow) arrow.classList.toggle('open', open);
 }
 
-async function checkModels() {
+async function checkModels(silent = false) {
   const now = Date.now();
   const c = mCache[cfg.provider];
-  if (c.list.length && (now-c.ts)<TTL) { fillModels(c.list); return; }
+  if (c.list.length && (now-c.ts)<TTL) { fillModels(c.list, silent); return; }
   if (fetching) return;
   const key = document.getElementById('apiKey').value.trim();
-  if (!key) { document.getElementById('mst').textContent='⚠️ Fill in Key first'; return; }
+  if (!key) {
+    if (!silent) document.getElementById('mst').textContent='⚠️ Fill in Key first';
+    return;
+  }
   fetching = true;
-  document.getElementById('mst').textContent = '⏳ Loading…';
+  if (!silent) document.getElementById('mst').textContent = '⏳ Loading…';
   try {
     const list = cfg.provider==='openai' ? await fetchOAI_models(key) : await fetchGEM_models(key);
     mCache[cfg.provider] = {list, ts:Date.now()};
     localStorage.setItem('ait-mc', JSON.stringify(mCache));
-    fillModels(list);
-    document.getElementById('mst').textContent = `✓ ${list.length} models`;
+    fillModels(list, silent);
+    if (!silent) document.getElementById('mst').textContent = `✓ ${list.length} models`;
   } catch(e) {
-    document.getElementById('mst').textContent = '❌ Failed';
-    toast('Failed to load models: '+e.message, 'err');
+    if (!silent) {
+      document.getElementById('mst').textContent = '❌ Failed';
+      toast('Failed to load models: '+e.message, 'err');
+    }
   } finally { fetching=false; }
 }
 
@@ -521,16 +531,26 @@ async function fetchGEM_models(key) {
     });
 }
 
-function fillModels(list) {
+function fillModels(list, silent = false) {
   const sel = document.getElementById('modelSel');
-  const cur = sel.value || cfg.model;
+  const saved = cfg.model;
+  const cur = sel.value || saved;
   sel.innerHTML = '<option value="">── Select a model ──</option>';
   list.forEach(m => {
     const o = document.createElement('option');
     o.value = o.textContent = m;
     sel.appendChild(o);
   });
-  if (cur && list.includes(cur)) sel.value = cur;
+  if (cur && list.includes(cur)) {
+    sel.value = cur;
+  } else if (saved && !list.includes(saved)) {
+    // Saved model no longer exists — warn the user
+    toast(`⚠️ Previously selected model "${saved}" is no longer available. Please select a new model in Settings.`, 'err', 6000);
+    toggleAc('settings');
+    document.getElementById('mst').textContent = '⚠️ Re-select model';
+    cfg.model = '';
+    save();
+  }
 }
 
 // ── Paste ─────────────────────────────────────────────────
